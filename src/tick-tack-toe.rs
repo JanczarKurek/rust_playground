@@ -1,15 +1,15 @@
 extern crate sdl2;
 
+use sdl2::gfx::primitives::DrawRenderer;
 use sdl2::pixels::Color;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::rect::Rect;
 use sdl2::render::Canvas;
 use sdl2::video::Window;
-use std::thread::current;
 use std::time::Duration;
-
-use rand::prelude::*;
+use sdl2::surface::Surface;
+use sdl2::pixels::PixelFormatEnum;
 
 #[derive(Clone)]
 #[derive(PartialEq)]
@@ -99,65 +99,106 @@ struct BoardArtist {
     n0: u32,
     n1: u32,
     border_size: u32,
+    canvas: Canvas<Surface<'static>>,
 }
 
 impl BoardArtist {
-    fn draw(&self, x: u32, y: u32, canvas: &mut Canvas<Window>, c: Color) -> () {
-        let old_c = canvas.draw_color();
-        canvas.set_draw_color(c);
-        canvas.fill_rect(Rect::new(
-            (x*self.tile_width + self.board_offset_width).try_into().unwrap(),
-            (y*self.tile_height + self.board_offset_height).try_into().unwrap(),
+    fn new(tile_len: u32, board_offset_width: u32, board_offset_height: u32, n0: u32, n1: u32, border_size: u32) -> Self {
+        return Self {
+            tile_width: tile_len,
+            tile_height: tile_len,
+            board_offset_width,
+            board_offset_height,
+            n0,
+            n1,
+            border_size,
+            canvas: Surface::new(tile_len*n0, tile_len * n1, PixelFormatEnum::RGB24).unwrap().into_canvas().unwrap(),
+        }
+    }
+
+    fn target_rect(&self) -> Rect {
+        Rect::new (
+            (self.board_offset_width - self.border_size) as i32,
+            (self.board_offset_height - self.border_size) as i32,
+            self.tile_width * self.n0 + self.border_size * 2,
+            self.tile_height * self.n1 + self.border_size * 2
+        )
+    }
+
+    fn draw(&mut self, x: u32, y: u32, c: Color) -> () {
+        let old_c = self.canvas.draw_color();
+        self.canvas.set_draw_color(c);
+        self.canvas.fill_rect(Rect::new(
+            (x*self.tile_width).try_into().unwrap(),
+            (y*self.tile_height).try_into().unwrap(),
             self.tile_width,
             self.tile_height
         )).unwrap();
-        canvas.set_draw_color(old_c);
+        self.canvas.set_draw_color(old_c);
     }
-    fn draw_border(&self, canvas: &mut Canvas<Window>) {
-        let old_c = canvas.draw_color();
-        canvas.set_draw_color(Color::RGB(123, 100, 23));
-        canvas.fill_rect(Rect::new(
-            (self.board_offset_width - self.border_size).try_into().unwrap(),
-            (self.board_offset_height - self.border_size).try_into().unwrap(),
-            self.tile_width * self.n0 + self.border_size * 2,
-            self.tile_height * self.n1 + self.border_size * 2
-        )).unwrap();
-        canvas.set_draw_color(old_c);
+    fn draw_border(&mut self) {
+        let old_c = self.canvas.draw_color();
+        self.canvas.set_draw_color(Color::RGB(123, 100, 23));
+        self.canvas.fill_rect(Rect::new(
+            0, 0,
+            self.tile_width*self.n0 + 2*self.border_size,
+             self.tile_height * self.n1 + 2&self.border_size)).unwrap();
+        self.canvas.set_draw_color(old_c);
 
     }
     fn get_coords(&self, x: i32, y: i32) -> (u32, u32) {
-        let ux = u32::try_from(x).unwrap();
-        let uy = u32::try_from(y).unwrap();
+        let ux = (x - self.board_offset_width as i32) as u32;
+        let uy = (y - self.board_offset_height as i32) as u32;
         ((ux / self.tile_width).try_into().unwrap(), (uy / self.tile_height).try_into().unwrap())
     }
-    fn draw_tick(&self, x: u32, y: u32, canvas: &mut Canvas<Window>) -> () {
-        self.draw(x, y, canvas, Color::RGB(255, 0, 0));
+    fn draw_tick(&mut self, x: u32, y: u32) -> () {
+        self.draw(x, y, Color::RGB(255, 0, 0));
     }
-    fn draw_tack(&self, x: u32, y: u32, canvas: &mut Canvas<Window>) -> () {
-        self.draw(x, y, canvas, Color::RGB(0, 255, 0));
+    fn draw_tack(&mut self, x: u32, y: u32) -> () {
+        self.draw(x, y, Color::RGB(0, 255, 0));
     }
-    fn draw_board(&self, board: &Board, canvas: &mut Canvas<Window>) -> () {
-        self.draw_border(canvas);
+    fn draw_board(&mut self, board: &Board, canvas: &mut Canvas<Window>) -> () {
+        self.draw_border();
         for i in 0usize..board.n0 {
             for j in 0usize..board.n1 {
                 match board.board[i][j] {
-                    Field::Filled(Player::Tick) => {self.draw_tick(i as u32, j as u32, canvas);}
-                    Field::Filled(Player::Tack) => {self.draw_tack(i as u32, j as u32, canvas);}
+                    Field::Filled(Player::Tick) => {self.draw_tick(i as u32, j as u32);}
+                    Field::Filled(Player::Tack) => {self.draw_tack(i as u32, j as u32);}
                     _ => {}
                 }
             }
         }
+        let texture_creator = canvas.texture_creator();
+        let texture = texture_creator.create_texture_from_surface(self.canvas.surface()).unwrap();
+        let target = self.target_rect();
+        canvas.copy(&texture, None, target).unwrap();
+
     }
 }
 
-type CallbackT = dyn Fn(usize, usize) -> ();
-struct CallbackInfo {
-    callback: Box<CallbackT>,
+type CallbackT<'a> = dyn FnMut(i32, i32) -> () + 'a;
+struct CallbackInfo<'a> {
+    callback: Box<CallbackT<'a>>,
     rect: Rect,
 }
 
-struct ClickDispatcher {
-    vec: Vec<CallbackInfo>,
+struct ClickDispatcher<'a> {
+    vec: Vec<CallbackInfo<'a>>,
+}
+
+impl ClickDispatcher<'_> {
+    fn new() -> Self {
+        ClickDispatcher {vec: vec![]}
+    }
+
+    fn dispatch(&mut self, x: i32, y: i32) {
+        for callback_info in self.vec.iter_mut().rev() {
+            if callback_info.rect.contains_point((x, y)) {
+                (callback_info.callback)(x, y);
+                break;
+            }
+        }
+    }
 }
 
 pub fn main() {
@@ -174,33 +215,31 @@ pub fn main() {
     let mut canvas = window.into_canvas().build().unwrap();
 
     let mut event_pump = sdl_context.event_pump().unwrap();
-    let mut rng = thread_rng();
-    let mut i = 0;
 
-    // Set the initial background color before drawing
-    // canvas.set_draw_color(Color::RGB(0, 128, 128));
-    // canvas.clear();
-    // canvas.present();
     let mut board: Board = Board::new(10, 10);
     let mut current_player = Player::Tick;
-    let board_artist = BoardArtist {
-        tile_width: 30, tile_height: 30, board_offset_width: 60,
-         board_offset_height: 60, border_size: 10,
-        n0: 10, n1: 10
-    };
+    let mut board_artist = BoardArtist::new (
+        30, 60,
+         60, 10,
+        10, 10,
+    );
+
+    let mut click_dispatcher = ClickDispatcher::new();
+    click_dispatcher.vec.push(
+        CallbackInfo {
+            callback: Box::new(|x, y|  {
+                let (x, y) = board_artist.get_coords(x, y);
+                current_player = board.set(x as usize, y as usize, &current_player);
+            }), 
+            rect: board_artist.target_rect(),
+
+    });
 
     'running: loop {
 
         canvas.set_draw_color(Color::RGB(0, 0, 0));
         canvas.clear();
 
-        // match turn {
-        //     State::Turn(player) => {
-
-        //     }
-        // }
-
-        // Handle events like quitting the application
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit { .. }
@@ -208,8 +247,7 @@ pub fn main() {
                     break 'running;
                 }
                 | Event::MouseButtonDown { timestamp, window_id, which, mouse_btn, clicks, x, y } => {
-                    let (x, y) = board_artist.get_coords(x, y);
-                    current_player = board.set(x as usize, y as usize, &current_player);
+                    click_dispatcher.dispatch(x, y);
                 }
                 _ => {}
             }
