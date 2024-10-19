@@ -10,6 +10,7 @@ use sdl2::video::Window;
 use std::time::Duration;
 use sdl2::surface::Surface;
 use sdl2::pixels::PixelFormatEnum;
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
 #[derive(PartialEq)]
@@ -216,7 +217,7 @@ pub fn main() {
 
     let mut event_pump = sdl_context.event_pump().unwrap();
 
-    let mut board: Board = Board::new(10, 10);
+    let board = Board::new(10, 10);
     let mut current_player = Player::Tick;
     let mut board_artist = BoardArtist::new (
         30, 60,
