@@ -10,7 +10,8 @@ use sdl2::video::Window;
 use std::time::Duration;
 use sdl2::surface::Surface;
 use sdl2::pixels::PixelFormatEnum;
-use std::sync::{Arc, Mutex};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 #[derive(Clone)]
 #[derive(PartialEq)]
@@ -217,22 +218,22 @@ pub fn main() {
 
     let mut event_pump = sdl_context.event_pump().unwrap();
 
-    let board = Board::new(10, 10);
+    let board = Rc::new(RefCell::new(Board::new(10, 10)));
     let mut current_player = Player::Tick;
-    let mut board_artist = BoardArtist::new (
+    let board_artist = Rc::new(RefCell::new(BoardArtist::new (
         30, 60,
          60, 10,
         10, 10,
-    );
+    )));
 
     let mut click_dispatcher = ClickDispatcher::new();
     click_dispatcher.vec.push(
         CallbackInfo {
             callback: Box::new(|x, y|  {
-                let (x, y) = board_artist.get_coords(x, y);
-                current_player = board.set(x as usize, y as usize, &current_player);
+                let (x, y) = board_artist.borrow().get_coords(x, y);
+                current_player = board.borrow_mut().set(x as usize, y as usize, &current_player);
             }), 
-            rect: board_artist.target_rect(),
+            rect: board_artist.borrow().target_rect(),
 
     });
 
@@ -253,7 +254,7 @@ pub fn main() {
                 _ => {}
             }
         }
-        board_artist.draw_board(&board, &mut canvas);
+        board_artist.borrow_mut().draw_board(&board.borrow(), &mut canvas);
 
 
         // Present the canvas with the updated frame
