@@ -1,6 +1,5 @@
 extern crate sdl2;
 
-use sdl2::gfx::primitives::DrawRenderer;
 use sdl2::pixels::Color;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
@@ -96,8 +95,6 @@ impl Board {
 struct BoardArtist {
     tile_width: u32,
     tile_height: u32,
-    board_offset_width: u32,
-    board_offset_height: u32,
     n0: u32,
     n1: u32,
     border_size: u32,
@@ -105,23 +102,20 @@ struct BoardArtist {
 }
 
 impl BoardArtist {
-    fn new(tile_len: u32, board_offset_width: u32, board_offset_height: u32, n0: u32, n1: u32, border_size: u32) -> Self {
+    fn new(tile_len: u32, n0: u32, n1: u32, border_size: u32) -> Self {
         return Self {
             tile_width: tile_len,
             tile_height: tile_len,
-            board_offset_width,
-            board_offset_height,
             n0,
             n1,
             border_size,
-            canvas: Surface::new(tile_len*n0, tile_len * n1, PixelFormatEnum::RGB24).unwrap().into_canvas().unwrap(),
+            canvas: Surface::new(tile_len*n0 + 2*border_size, tile_len * n1 + 2*border_size, PixelFormatEnum::RGB24).unwrap().into_canvas().unwrap(),
         }
     }
 
-    fn target_rect(&self) -> Rect {
+    fn target_rect(&self, x: u32, y: u32) -> Rect {
         Rect::new (
-            (self.board_offset_width - self.border_size) as i32,
-            (self.board_offset_height - self.border_size) as i32,
+            x as i32, y as i32,
             self.tile_width * self.n0 + self.border_size * 2,
             self.tile_height * self.n1 + self.border_size * 2
         )
@@ -131,8 +125,8 @@ impl BoardArtist {
         let old_c = self.canvas.draw_color();
         self.canvas.set_draw_color(c);
         self.canvas.fill_rect(Rect::new(
-            (x*self.tile_width).try_into().unwrap(),
-            (y*self.tile_height).try_into().unwrap(),
+            (x*self.tile_width + self.border_size).try_into().unwrap(),
+            (y*self.tile_height + self.border_size).try_into().unwrap(),
             self.tile_width,
             self.tile_height
         )).unwrap();
@@ -144,14 +138,17 @@ impl BoardArtist {
         self.canvas.fill_rect(Rect::new(
             0, 0,
             self.tile_width*self.n0 + 2*self.border_size,
-             self.tile_height * self.n1 + 2&self.border_size)).unwrap();
+             self.tile_height * self.n1 + 2*self.border_size)).unwrap();
         self.canvas.set_draw_color(old_c);
 
     }
-    fn get_coords(&self, x: i32, y: i32) -> (u32, u32) {
-        let ux = (x - self.board_offset_width as i32) as u32;
-        let uy = (y - self.board_offset_height as i32) as u32;
-        ((ux / self.tile_width).try_into().unwrap(), (uy / self.tile_height).try_into().unwrap())
+    fn get_coords(&self, x: i32, y: i32) -> Option<(u32, u32)> {
+        println!("{} {}", x, y);
+        let ux = (x as u32).checked_sub(self.border_size)?;
+        let uy = (y as u32).checked_sub(self.border_size)?;
+        let result = ((ux / (self.tile_width)).try_into().unwrap(), (uy / (self.tile_height)).try_into().unwrap());
+        println!("{:?}", result);
+        return Some(result);
     }
     fn draw_tick(&mut self, x: u32, y: u32) -> () {
         self.draw(x, y, Color::RGB(255, 0, 0));
@@ -159,7 +156,7 @@ impl BoardArtist {
     fn draw_tack(&mut self, x: u32, y: u32) -> () {
         self.draw(x, y, Color::RGB(0, 255, 0));
     }
-    fn draw_board(&mut self, board: &Board, canvas: &mut Canvas<Window>) -> () {
+    fn draw_board(&mut self, board: &Board) -> &Canvas<Surface<'static>> {
         self.draw_border();
         for i in 0usize..board.n0 {
             for j in 0usize..board.n1 {
@@ -170,12 +167,14 @@ impl BoardArtist {
                 }
             }
         }
-        let texture_creator = canvas.texture_creator();
-        let texture = texture_creator.create_texture_from_surface(self.canvas.surface()).unwrap();
-        let target = self.target_rect();
-        canvas.copy(&texture, None, target).unwrap();
-
+        return &self.canvas
     }
+}
+
+fn blit(source: &Canvas<Surface<'static>>, target: &mut Canvas<Window>, place: Rect) -> () {
+    let texture_creator = target.texture_creator();
+    let texture = texture_creator.create_texture_from_surface(source.surface()).unwrap();
+    target.copy(&texture, None, place).unwrap();
 }
 
 type CallbackT<'a> = dyn FnMut(i32, i32) -> () + 'a;
@@ -196,7 +195,7 @@ impl ClickDispatcher<'_> {
     fn dispatch(&mut self, x: i32, y: i32) {
         for callback_info in self.vec.iter_mut().rev() {
             if callback_info.rect.contains_point((x, y)) {
-                (callback_info.callback)(x, y);
+                (callback_info.callback)(x - callback_info.rect.x, y - callback_info.rect.y);
                 break;
             }
         }
@@ -220,20 +219,20 @@ pub fn main() {
 
     let board = Rc::new(RefCell::new(Board::new(10, 10)));
     let mut current_player = Player::Tick;
-    let board_artist = Rc::new(RefCell::new(BoardArtist::new (
-        30, 60,
-         60, 10,
+    let board_artist: Rc<RefCell<BoardArtist>> = Rc::new(RefCell::new(BoardArtist::new (
+        30,  10,
         10, 10,
     )));
 
     let mut click_dispatcher = ClickDispatcher::new();
     click_dispatcher.vec.push(
         CallbackInfo {
-            callback: Box::new(|x, y|  {
-                let (x, y) = board_artist.borrow().get_coords(x, y);
-                current_player = board.borrow_mut().set(x as usize, y as usize, &current_player);
+            callback: Box::new(|x: i32, y|  {
+                board_artist.borrow().get_coords(x, y).and_then(
+                    |(x, y)| { current_player = board.borrow_mut().set(x as usize, y as usize, &current_player); Option::<()>::None}
+                );
             }), 
-            rect: board_artist.borrow().target_rect(),
+            rect: board_artist.borrow().target_rect(100, 100),
 
     });
 
@@ -254,8 +253,9 @@ pub fn main() {
                 _ => {}
             }
         }
-        board_artist.borrow_mut().draw_board(&board.borrow(), &mut canvas);
-
+        // board_artist.borrow_mut().draw_board(&board.borrow(), &mut canvas);
+        let target_rect = board_artist.borrow().target_rect(100, 100);
+        blit(board_artist.borrow_mut().draw_board(&board.borrow()), &mut canvas, target_rect);
 
         // Present the canvas with the updated frame
         canvas.present();
