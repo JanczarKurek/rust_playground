@@ -1,5 +1,6 @@
 extern crate sdl2;
 
+use sdl2::libc::abort;
 use sdl2::pixels::Color;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
@@ -12,8 +13,7 @@ use sdl2::pixels::PixelFormatEnum;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-#[derive(Clone)]
-#[derive(PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 enum Player {
     Tick,
     Tack
@@ -80,15 +80,25 @@ impl Board {
         }
         return true;
     }
-    // fn state(&self) -> State {
-    //     for x in 0usize..board.n0 {
-    //         for y in 0usize..board.n1 {
-    //             if self.is_diag2_won(x, y) || self.is_diag_won(x, y) {
-    //                 match 
-    //             }
-    //         }
-    //     }
-    // }
+    fn state(&self) -> State {
+        let mut ongoing = false;
+        for x in 0usize..self.n0 {
+            for y in 0usize..self.n1 {
+                if self.board[x][y] == Field::Empty {
+                    ongoing = true;
+                }
+                if self.is_diag2_won(x, y) || self.is_diag_won(x, y) {
+                    match self.board[x][y] {
+                        Field::Filled(player) => {
+                            return State::Won(player)
+                        },
+                        Field::Empty => unreachable!()
+                    }
+                }
+            }
+        }
+        return if ongoing {State::Running} else {State::Tie};
+    }
 
 }
 
